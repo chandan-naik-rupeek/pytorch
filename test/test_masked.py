@@ -162,6 +162,21 @@ reference_functions = dict(
 
 masked_ops = [op for op in op_db if op.name.startswith('_masked.')]
 masked_ops_with_references = [op for op in masked_ops if op.name.rsplit('.', 1)[-1] in reference_functions]
+masked_ops_with_mixed_layouts_support = [op for op in masked_ops if op.supports_sparse or op.supports_sparse_csr]
+
+
+def _tensor_to_strided(obj):
+    # after gh-59958 is resolved, replace the usage of this function
+    # with torch.Tensor.to_dense
+    if obj.layout == torch.strided:
+        return obj
+    return obj.to_dense()
+
+
+def to_strided(obj):
+    """Convert the tensor content of object to strided tensor content.
+    """
+    return torch.utils._pytree.tree_map(_tensor_to_strided, obj)
 
 
 class TestMasked(TestCase):
@@ -184,6 +199,29 @@ class TestMasked(TestCase):
             actual = torch.where(outmask, actual, actual.new_zeros([]))
             expected = torch.where(outmask, expected, expected.new_zeros([]))
             self.assertEqual(actual, expected, exact_device=False)
+
+    @onlyNativeDeviceTypes
+    @suppress_warnings
+    @ops(masked_ops_with_mixed_layouts_support)
+    def test_mixed_layouts(self, device, dtype, op):
+        sample_inputs = op.sample_inputs_mixed(device, dtype)
+        for sample_input in sample_inputs:
+            t_inp, t_args, t_kwargs = sample_input.input, sample_input.args, sample_input.kwargs
+            actual = op.op(t_inp, *t_args, **t_kwargs)
+
+            # the first input defines the result layout
+            assert actual.layout == t_inp.layout
+
+            # check masked invariance:
+            #  op(inp, mask).to_dense() == op(inp.to_dense(), mask.to_dense()) at outmask
+            #
+            r_inp, r_args, r_kwargs = map(to_strided, (t_inp, t_args, t_kwargs))
+            outmask = torch._masked._output_mask(op.op, r_inp, *r_args, **r_kwargs)
+            strided = to_strided(actual)
+            strided = torch.where(outmask, strided, strided.new_zeros([]))
+            reference = op.op(r_inp, *r_args, **r_kwargs)
+            reference = torch.where(outmask, reference, reference.new_zeros([]))
+            self.assertEqual(strided, reference, exact_device=False)
 
 
 instantiate_device_type_tests(TestMasked, globals())
