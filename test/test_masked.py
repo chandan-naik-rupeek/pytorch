@@ -204,12 +204,11 @@ class TestMasked(TestCase):
     @suppress_warnings
     @ops(masked_ops_with_mixed_layouts_support)
     def test_mixed_layouts(self, device, dtype, op):
-        sample_inputs = op.sample_inputs_mixed(device, dtype)
-        for sample_input in sample_inputs:
-            t_inp, t_args, t_kwargs = sample_input.input, sample_input.args, sample_input.kwargs
-            actual = op.op(t_inp, *t_args, **t_kwargs)
 
-            # the first input defines the result layout
+        sample_inputs = op.sample_inputs_mixed(device, dtype)
+        for sample in sample_inputs:
+            t_inp, t_args, t_kwargs = sample.input, sample.args, sample.kwargs
+            actual = op.op(t_inp, *t_args, **t_kwargs)
             assert actual.layout == t_inp.layout
 
             # check masked invariance:
