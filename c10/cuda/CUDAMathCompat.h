@@ -42,11 +42,81 @@ __MATH_FUNCTIONS_DECL__ double ceil(double x) {
   return ::ceil(x);
 }
 
+
+__MATH_FUNCTIONS_DECL__ float fp32_from_bits(uint32_t w) {
+#if defined(__OPENCL_VERSION__)
+  return as_float(w);
+#elif defined(__CUDA_ARCH__)
+  return __uint_as_float((unsigned int)w);
+#elif defined(__INTEL_COMPILER)
+  return _castu32_f32(w);
+#else
+  union {
+    uint32_t as_bits;
+    float as_value;
+  } fp32 = {w};
+  return fp32.as_value;
+#endif
+}
+
+__MATH_FUNCTIONS_DECL__ uint32_t fp32_to_bits(float f) {
+#if defined(__OPENCL_VERSION__)
+  return as_uint(f);
+#elif defined(__CUDA_ARCH__)
+  return (uint32_t)__float_as_uint(f);
+#elif defined(__INTEL_COMPILER)
+  return _castf32_u32(f);
+#else
+  union {
+    float as_value;
+    uint32_t as_bits;
+  } fp32 = {f};
+  return fp32.as_bits;
+#endif
+}
+
+__MATH_FUNCTIONS_DECL__ double fp64_from_bits(uint64_t w) {
+#if defined(__CUDA_ARCH__)
+  return __longlong_as_double(w);
+#else
+  union {
+    uint64_t as_bits;
+    double as_value;
+  } fp64 = {w};
+  return fp64.as_value;
+#endif
+}
+
+__MATH_FUNCTIONS_DECL__ uint64_t fp64_to_bits(double f) {
+#if defined(__CUDA_ARCH__)
+  return __double_as_longlong(f);
+#else
+  union {
+    double as_value;
+    int64_t as_bits;
+  } fp64 = {f};
+  return fp64.as_bits;
+#endif
+}
+
 __MATH_FUNCTIONS_DECL__ float copysign(float x, float y) {
-  return ::copysignf(x, y);
+  #if (!defined(__aarch64__)) || defined(__clang__) || (__GNUC__ > 8)
+   // std::copysign gets ICE/Segfaults with gcc 7/8 on arm64
+   // (e.g. Jetson), see PyTorch PR #51834
+    return ::copysignf(x, y);
+  #else
+    return fp32_from_bits(
+        (fp32_to_bits(x) & 0x7fffffffu) | (fp32_to_bits(y) & 0x80000000u));
+  #endif
 }
 __MATH_FUNCTIONS_DECL__ double copysign(double x, double y) {
-  return ::copysign(x, y);
+  #if (!defined(__aarch64__)) || defined(__clang__) || (__GNUC__ > 8)
+    return ::copysign(x, y);
+  #else
+    return fp64_from_bits(
+        (fp64_to_bits(x) & 0x7fffffffffffffffull) |
+        (fp64_to_bits(y) & 0x8000000000000000ull));
+  #endif
 }
 
 __MATH_FUNCTIONS_DECL__ float floor(float x) {
