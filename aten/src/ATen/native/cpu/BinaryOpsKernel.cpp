@@ -24,7 +24,13 @@ using namespace vec256;
 // copysign faster for the half-precision types
 template<typename T>
 T copysign(T a, T b) {
-  return std::copysign(a, b);
+  #if (!defined(__aarch64__)) || defined(__clang__) || (__GNUC__ > 8)
+  // std::copysign gets ICE/Segfaults with gcc 7/8 on arm64
+  // (e.g. Jetson), see PyTorch PR #51834
+    return std::copysign(a, b);
+  #else
+    return std::signbit(b) ? -std::abs(a) : std::abs(a);
+  #endif
 }
 
 // Implement copysign for half precision floats using bit ops
@@ -149,6 +155,18 @@ void div_trunc_kernel(TensorIterator& iter) {
   }
 }
 
+// this is a function because MSVC does not like us to use #if inside AT_DISPATC
+template <typename scalar_t>
+static inline scalar_t signed_zero(scalar_t sign) {
+#if (!defined(__aarch64__)) || defined(__clang__) || (__GNUC__ > 8)
+  // std::copysign gets ICE/Segfaults with gcc 7/8 on arm64
+  // (e.g. Jetson), see PyTorch PR #51834
+  return std::copysign(scalar_t(0), sign);
+#else
+  return std::signbit(sign) ? -scalar_t(0) : scalar_t(0);
+#endif
+}
+
 // NOTE: [Floor Division in Python]
 // Python's __floordiv__ operator is more complicated than just floor(a / b).
 // It aims to maintain the property: a == (a // b) * b + remainder(a, b)
@@ -201,7 +219,7 @@ void div_floor_kernel(TensorIterator& iter) {
                 floordiv += scalar_t(1.0);
               }
             } else {
-              floordiv = copysign(scalar_t(0), a / b);
+              floordiv = signed_zero(a / b);
             }
             return floordiv;
           });
